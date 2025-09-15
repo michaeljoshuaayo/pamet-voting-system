@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { Eye, EyeOff, Vote } from 'lucide-react'
+import { Eye, EyeOff, Vote, Mail, Lock, Shield, CheckCircle } from 'lucide-react'
 
 interface LoginFormProps {
   onLoginSuccess: () => void
@@ -14,6 +14,9 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [emailFocused, setEmailFocused] = useState(false)
+  const [passwordFocused, setPasswordFocused] = useState(false)
+  const [showSuccess, setShowSuccess] = useState(false)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -29,7 +32,10 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
       if (error) throw error
 
       if (data.user) {
-        onLoginSuccess()
+        setShowSuccess(true)
+        setTimeout(() => {
+          onLoginSuccess()
+        }, 1500)
       }
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : 'Login failed')
@@ -64,8 +70,20 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
           {/* Login Form */}
           <form onSubmit={handleLogin} className="space-y-6">
             {error && (
-              <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm backdrop-blur-sm">
-                {error}
+              <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm backdrop-blur-sm animate-pulse">
+                <div className="flex items-center">
+                  <div className="w-2 h-2 bg-red-400 rounded-full mr-2"></div>
+                  {error}
+                </div>
+              </div>
+            )}
+
+            {showSuccess && (
+              <div className="bg-green-500/10 border border-green-500/20 text-green-400 px-4 py-3 rounded-lg text-sm backdrop-blur-sm">
+                <div className="flex items-center">
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  Login successful! Redirecting...
+                </div>
               </div>
             )}
 
@@ -74,15 +92,22 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
                 <label htmlFor="email" className="block text-sm font-medium text-white mb-2">
                   Email Address
                 </label>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent text-white placeholder-gray-300 backdrop-blur-sm transition-all"
-                  placeholder="Enter your email"
-                  required
-                />
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Mail className={`h-5 w-5 transition-colors ${emailFocused ? 'text-blue-400' : 'text-gray-400'}`} />
+                  </div>
+                  <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    onFocus={() => setEmailFocused(true)}
+                    onBlur={() => setEmailFocused(false)}
+                    className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent text-white placeholder-gray-300 backdrop-blur-sm transition-all duration-200"
+                    placeholder="Enter your email"
+                    required
+                  />
+                </div>
               </div>
 
               <div>
@@ -90,19 +115,24 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
                   Password
                 </label>
                 <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className={`h-5 w-5 transition-colors ${passwordFocused ? 'text-blue-400' : 'text-gray-400'}`} />
+                  </div>
                   <input
                     id="password"
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 pr-12 bg-white/10 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent text-white placeholder-gray-300 backdrop-blur-sm transition-all"
+                    onFocus={() => setPasswordFocused(true)}
+                    onBlur={() => setPasswordFocused(false)}
+                    className="w-full pl-10 pr-12 py-3 bg-white/10 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent text-white placeholder-gray-300 backdrop-blur-sm transition-all duration-200"
                     placeholder="Enter your password"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-300 hover:text-white transition-colors"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-300 hover:text-white transition-colors"
                   >
                     {showPassword ? (
                       <EyeOff className="h-5 w-5" />
@@ -116,13 +146,18 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
 
             <button
               type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white py-3 px-6 rounded-lg hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-transparent disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium shadow-lg hover:shadow-xl transform hover:scale-[1.02]"
+              disabled={loading || showSuccess}
+              className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white py-3 px-6 rounded-lg hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-transparent disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98]"
             >
               {loading ? (
                 <div className="flex items-center justify-center">
                   <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent mr-3"></div>
-                  Signing in...
+                  Authenticating...
+                </div>
+              ) : showSuccess ? (
+                <div className="flex items-center justify-center">
+                  <CheckCircle className="h-5 w-5 mr-2 animate-bounce" />
+                  Success! Redirecting...
                 </div>
               ) : (
                 <div className="flex items-center justify-center">
@@ -133,15 +168,35 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
             </button>
           </form>
 
-          {/* Footer */}
-          <div className="mt-8 text-center">
+          {/* Enhanced Footer */}
+          <div className="mt-8 text-center space-y-4">
+            <div className="flex items-center justify-center space-x-4 text-xs text-gray-300">
+              <div className="flex items-center space-x-1">
+                <Shield className="h-3 w-3" />
+                <span>Secure</span>
+              </div>
+              <div className="w-1 h-1 bg-gray-400 rounded-full"></div>
+              <div className="flex items-center space-x-1">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <span>Online</span>
+              </div>
+              <div className="w-1 h-1 bg-gray-400 rounded-full"></div>
+              <span>PAMET Portal</span>
+            </div>
+            
             <p className="text-sm text-gray-300">
               Don&apos;t have an account?{' '}
-              <span className="text-blue-400 font-medium">Contact the election administrator</span>
+              <span className="text-blue-400 font-medium cursor-pointer hover:text-blue-300 transition-colors">
+                Contact the election administrator
+              </span>
             </p>
-            <div className="mt-4 flex items-center justify-center space-x-2 text-xs text-gray-400">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span>Secure PAMET Election Portal</span>
+            
+            <div className="text-xs text-gray-400 pt-2 border-t border-white/10">
+              <p>© 2025 PAMET Sorsogon Chapter</p>
+              <p className="mt-1">Secure Election Management System</p>
+              <p className="mt-2 text-blue-300/80">
+                Designed & Engineered by <span className="font-medium text-blue-300">Michael Joshua P. Ayo</span>
+              </p>
             </div>
           </div>
         </div>
