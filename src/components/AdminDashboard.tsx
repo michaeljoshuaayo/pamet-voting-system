@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase, Database } from '@/lib/supabase'
 import { 
   Users, 
@@ -22,6 +22,7 @@ import {
 import { pametPositions, pametCandidates } from '@/lib/pametData'
 import ConfirmModal from './ConfirmModal'
 import CandidatePhoto from './CandidatePhoto'
+import PerformanceMonitor from './PerformanceMonitor'
 import toast from 'react-hot-toast'
 
 type VoterProfile = Database['public']['Tables']['voter_profiles']['Row']
@@ -42,6 +43,77 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
   const [voters, setVoters] = useState<VoterProfile[]>([])
   const [settings, setSettings] = useState<ElectionSettings | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const [lastRefresh, setLastRefresh] = useState<number>(Date.now())
+  
+  // Performance metrics state
+  const [performanceMetrics, setPerformanceMetrics] = useState({
+    loadTime: 0,
+    concurrentUsers: 0,
+    cacheHitRate: 0,
+    lastUpdate: Date.now()
+  })
+
+  // Caching state
+  const CACHE_DURATION = 15000 // 15 seconds
+  const [cachedData, setCachedData] = useState<{
+    positions: Position[]
+    candidates: Candidate[]
+    voters: VoterProfile[]
+    settings: ElectionSettings | null
+    stats: {
+      total_voters: number
+      voted_count: number
+      admin_count: number
+      concurrent_users: number
+      cache_timestamp: number
+      load_time: number
+    }
+  } | null>(null)
+  const [cacheTimestamp, setCacheTimestamp] = useState(0)
+
+  // Enhanced logout handler with loading state and better error handling
+  const handleEnhancedLogout = async () => {
+    if (isLoggingOut) return // Prevent double-clicks
+    
+    try {
+      setIsLoggingOut(true)
+      toast.loading('Logging out...', { id: 'logout-toast' })
+      
+      // Clear any ongoing operations
+      setLoading(false)
+      
+      // Sign out from Supabase
+      const { error } = await supabase.auth.signOut()
+      
+      if (error) {
+        console.error('Logout error:', error)
+        toast.error(`Logout failed: ${error.message}`, { id: 'logout-toast' })
+        return
+      }
+      
+      // Clear local state
+      setPositions([])
+      setCandidates([])
+      setVoters([])
+      setSettings(null)
+      setCachedData(null)
+      setCacheTimestamp(0)
+      
+      toast.success('Logged out successfully', { id: 'logout-toast' })
+      
+      // Small delay to show success message before calling parent logout
+      setTimeout(() => {
+        onLogout()
+      }, 500)
+      
+    } catch (error) {
+      console.error('Unexpected logout error:', error)
+      toast.error('Logout failed. Please try refreshing the page.', { id: 'logout-toast' })
+    } finally {
+      setIsLoggingOut(false)
+    }
+  }
 
   // Filter out admin accounts from voters - only count actual voters
   const registeredVoters = voters.filter(voter => !voter.is_admin)
@@ -73,50 +145,139 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
   })
 
   const fetchData = useCallback(async () => {
+    const startTime = Date.now()
     try {
       setLoading(true)
       
-      // Fetch real data from Supabase database
-      const [positionsRes, candidatesRes, votersRes, settingsRes] = await Promise.all([
-        supabase.from('positions').select('*').order('order_index'),
-        supabase.from('candidates').select('*').order('first_name'),
-        supabase.from('voter_profiles').select('*').order('first_name'),
-        supabase.from('election_settings').select('*').limit(1)
-      ])
-
-      // Handle any database errors
-      if (positionsRes.error) {
-        console.error('Error fetching positions:', positionsRes.error)
-        throw new Error(`Positions: ${positionsRes.error.message}`)
-      }
-      if (candidatesRes.error) {
-        console.error('Error fetching candidates:', candidatesRes.error)
-        throw new Error(`Candidates: ${candidatesRes.error.message}`)
-      }
-      if (votersRes.error) {
-        console.error('Error fetching voters:', votersRes.error)
-        throw new Error(`Voters: ${votersRes.error.message}`)
-      }
-      if (settingsRes.error) {
-        console.error('Error fetching settings:', settingsRes.error)
-        throw new Error(`Settings: ${settingsRes.error.message}`)
-      }
-
-      setPositions(positionsRes.data || [])
-      setCandidates(candidatesRes.data || [])
-      setVoters(votersRes.data || [])
-      setSettings(settingsRes.data?.[0] || null)
+      // �️ SAFE APPROACH: Try optimized function first, fallback to original queries
+      let dashboardData = null
+      let useOptimized = true
       
-      const totalMembers = votersRes.data?.length || 0
-      const actualVoters = votersRes.data?.filter(v => !v.is_admin).length || 0
-      toast.success(`Loaded ${totalMembers} PAMET members (${actualVoters} voters, ${totalMembers - actualVoters} admins)`)
+      try {
+        // Try the new optimized function
+        const { data, error } = await supabase
+          .rpc('get_admin_dashboard_data')
+        
+        if (error) {
+          console.warn('Optimized function not available, using fallback:', error.message)
+          useOptimized = false
+        } else if (data?.error) {
+          console.warn('Optimized function returned error, using fallback:', data.message)
+          useOptimized = false
+        } else {
+          dashboardData = data
+        }
+      } catch (optimizedError) {
+        console.warn('Optimized function failed, using fallback:', optimizedError)
+        useOptimized = false
+      }
+
+      // 🔄 FALLBACK: Use original queries if optimized function fails
+      if (!useOptimized || !dashboardData) {
+        console.log('Using fallback queries for safety')
+        
+        const [positionsRes, candidatesRes, votersRes, settingsRes] = await Promise.all([
+          supabase
+            .from('positions')
+            .select('id, title, description, order_index, created_at')
+            .order('order_index'),
+          supabase
+            .from('candidates')
+            .select('id, position_id, first_name, last_name, platform, photo_url, vote_count, created_at')
+            .order('first_name'),
+          supabase
+            .from('voter_profiles')
+            .select('id, user_id, email, first_name, last_name, member_id, is_admin, has_voted, created_at')
+            .order('first_name'),
+          supabase
+            .from('election_settings')
+            .select('id, is_voting_open, voting_start_time, voting_end_time, election_title, updated_at, updated_by')
+            .limit(1)
+        ])
+
+        // Check for errors in fallback queries
+        const errors = [
+          { res: positionsRes, name: 'Positions' },
+          { res: candidatesRes, name: 'Candidates' },
+          { res: votersRes, name: 'Voters' },
+          { res: settingsRes, name: 'Settings' }
+        ].filter(({ res }) => res.error)
+
+        if (errors.length > 0) {
+          const errorMessages = errors.map(({ res, name }) => `${name}: ${res.error!.message}`)
+          throw new Error(errorMessages.join('; '))
+        }
+
+        // Structure data like optimized function
+        const votersData = votersRes.data || []
+        dashboardData = {
+          positions: positionsRes.data || [],
+          candidates: candidatesRes.data || [],
+          voters: votersData,
+          settings: settingsRes.data?.[0] || null,
+          stats: {
+            total_voters: votersData.filter(v => !v.is_admin).length,
+            voted_count: votersData.filter(v => !v.is_admin && v.has_voted).length,
+            admin_count: votersData.filter(v => v.is_admin).length,
+            concurrent_users: 0,
+            cache_timestamp: Date.now() / 1000,
+            load_time: 0,
+            version: 'fallback'
+          }
+        }
+      }
+
+      if (!dashboardData) {
+        throw new Error('No data returned from any method')
+      }
+
+      // Extract data with type safety
+      const { positions, candidates, voters, settings, stats } = dashboardData
+      
+      // Set data efficiently
+      setPositions(positions || [])
+      setCandidates(candidates || [])
+      setVoters(voters || [])
+      setSettings(settings || null)
+      
+      // Update performance metrics
+      const loadTime = Date.now() - startTime
+      setLastRefresh(Date.now())
+      setPerformanceMetrics({
+        loadTime,
+        concurrentUsers: stats?.concurrent_users || 0,
+        cacheHitRate: 0,
+        lastUpdate: Date.now()
+      })
+
+      // Cache the results
+      setCachedData({ positions, candidates, voters, settings, stats })
+      setCacheTimestamp(Date.now())
+      
+      // Enhanced performance feedback with safety indicators
+      const totalVoters = stats?.total_voters || 0
+      const votedCount = stats?.voted_count || 0
+      const concurrentUsers = stats?.concurrent_users || 0
+      const version = stats?.version || 'unknown'
+      
+      if (loadTime < 200) {
+        toast.success(`⚡ Excellent! Loaded in ${loadTime}ms • ${totalVoters} voters, ${votedCount} voted • ${concurrentUsers} users ${useOptimized ? '🚀' : '🛡️'}`)
+      } else if (loadTime < 500) {
+        toast.success(`✅ Good! Loaded in ${loadTime}ms • ${totalVoters} voters, ${votedCount} voted • ${version} mode`)
+      } else {
+        toast(`📊 Loaded in ${loadTime}ms • ${totalVoters} voters, ${votedCount} voted • ${version} mode`, {
+          icon: useOptimized ? '🚀' : '🛡️',
+          duration: 4000
+        })
+      }
+      
     } catch (error) {
       console.error('Error loading election data:', error)
       
-      // Fallback to static data if database fails
+      // Final fallback to static data
       setPositions(pametPositions)
       setCandidates(pametCandidates)
-      setVoters([]) // Empty array since pametVoters doesn't match VoterProfile type
+      setVoters([])
       setSettings({
         id: 'fallback-settings-id',
         is_voting_open: false,
@@ -128,15 +289,71 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
       })
       
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      toast.error(`Database connection failed: ${errorMessage}. Using fallback data.`)
+      toast.error(`🛡️ Using static fallback data: ${errorMessage}`)
     } finally {
       setLoading(false)
     }
   }, [])
 
+  // 🚀 INTELLIGENT CACHING: Reduce database load for concurrent users
+  const debouncedFetchData = useCallback(() => {
+    const now = Date.now()
+    
+    // Check for rapid successive calls protection
+    if (now - lastRefresh < 1000) {
+      toast.error('Please wait before refreshing again (prevents server overload)')
+      return
+    }
+    
+    // Use cache for rapid successive calls within cache duration
+    if (cachedData && (now - cacheTimestamp) < CACHE_DURATION) {
+      // Set cached data
+      setPositions(cachedData.positions || [])
+      setCandidates(cachedData.candidates || [])
+      setVoters(cachedData.voters || [])
+      setSettings(cachedData.settings || null)
+      
+      const cacheAge = Math.round((now - cacheTimestamp) / 1000)
+      const concurrentUsers = cachedData.stats?.concurrent_users || 0
+      
+      // Update cache hit rate
+      setPerformanceMetrics(prev => ({
+        ...prev,
+        cacheHitRate: prev.cacheHitRate + 1,
+        lastUpdate: now
+      }))
+      
+      toast.success(`📱 Cached data (${cacheAge}s old) • Reduced server load • ${concurrentUsers} users online`)
+      return
+    }
+    
+    // Fresh fetch with caching
+    fetchData()
+  }, [lastRefresh, cachedData, cacheTimestamp, CACHE_DURATION, fetchData])
+
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // TEMPORARILY DISABLED: Real-time subscriptions causing infinite loops
+  // Will re-enable after testing manual refresh functionality
+  /*
+  useEffect(() => {
+    const subscription = supabase
+      .channel('admin_dashboard')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'voter_profiles' },
+        (payload) => {
+          console.log('Real-time update received:', payload)
+        }
+      )
+      .subscribe()
+    
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
+  */
 
   const handleAddVoter = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -368,8 +585,35 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
               <div className="w-24 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 mx-auto sm:mx-0 mt-3 rounded-full"></div>
             </div>
             
-            {/* Enhanced Action Buttons */}
+            {/* Enhanced Action Buttons with Performance Metrics */}
             <div className="flex flex-col sm:flex-row gap-3 self-center sm:self-auto">
+              <button
+                onClick={debouncedFetchData}
+                disabled={loading}
+                className="group bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white px-6 py-3 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Activity className={`h-5 w-5 group-hover:scale-110 transition-transform ${loading ? 'animate-spin' : ''}`} />
+                <div className="flex flex-col items-start">
+                  <span className="font-medium">{loading ? 'Refreshing...' : 'Refresh Data'}</span>
+                  {!loading && (
+                    <div className="flex items-center space-x-2 text-xs opacity-75">
+                      {lastRefresh && (
+                        <span>{Math.round((Date.now() - lastRefresh) / 1000)}s ago</span>
+                      )}
+                      {performanceMetrics.loadTime > 0 && (
+                        <span>• {performanceMetrics.loadTime}ms</span>
+                      )}
+                      {performanceMetrics.concurrentUsers > 0 && (
+                        <span>• {performanceMetrics.concurrentUsers} users</span>
+                      )}
+                      {performanceMetrics.cacheHitRate > 0 && (
+                        <span>• 📱 {performanceMetrics.cacheHitRate} cached</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </button>
+              
               {showViewAsVoter && onViewAsVoter && (
                 <button
                   onClick={onViewAsVoter}
@@ -380,15 +624,34 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
                 </button>
               )}
               <button
-                onClick={onLogout}
-                className="group bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 text-white px-6 py-3 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center space-x-2"
+                onClick={handleEnhancedLogout}
+                disabled={isLoggingOut}
+                className={`group ${
+                  isLoggingOut 
+                    ? 'bg-gray-400 cursor-not-allowed' 
+                    : 'bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 transform hover:scale-105'
+                } text-white px-6 py-3 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl flex items-center justify-center space-x-2 min-w-[120px]`}
               >
-                <LogOut className="h-5 w-5 group-hover:scale-110 transition-transform" />
-                <span className="font-medium">Logout</span>
+                {isLoggingOut ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-white/20 border-t-white"></div>
+                    <span className="font-medium">Logging out...</span>
+                  </>
+                ) : (
+                  <>
+                    <LogOut className="h-5 w-5 group-hover:scale-110 transition-transform" />
+                    <span className="font-medium">Logout</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 🚀 Performance Monitor - Shows system health for 120+ users */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
+        <PerformanceMonitor performanceMetrics={performanceMetrics} />
       </div>
 
       {/* Enhanced Mobile-Optimized Navigation */}

@@ -45,8 +45,10 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
   const [voterProfile, setVoterProfile] = useState<VoterProfile | null>(null)
   const [positions, setPositions] = useState<PositionWithCandidates[]>([])
   const [electionSettings, setElectionSettings] = useState<ElectionSettings | null>(null)
+  const [totalEligibleVoters, setTotalEligibleVoters] = useState<number>(0)
   const [loading, setLoading] = useState(true)
-  const [voting, setVoting] = useState<string | null>(null)
+  const [voting, setVoting] = useState<{positionId: string, candidateId: string | null} | null>(null)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
 
   useEffect(() => {
     const initializeData = async () => {
@@ -67,11 +69,12 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
         setVoterProfile(profile)
 
         // Then fetch election data
-        const [settingsRes, positionsRes, candidatesRes, votesRes] = await Promise.all([
+        const [settingsRes, positionsRes, candidatesRes, votesRes, votersCountRes] = await Promise.all([
           supabase.from('election_settings').select('*').limit(1),
           supabase.from('positions').select('*').order('order_index'),
           supabase.from('candidates').select('*').order('first_name'),
-          profile ? supabase.from('election_votes').select('*').eq('voter_id', profile.id) : Promise.resolve({ data: [], error: null })
+          profile ? supabase.from('election_votes').select('*').eq('voter_id', profile.id) : Promise.resolve({ data: [], error: null }),
+          supabase.from('voter_profiles').select('id', { count: 'exact' }).eq('is_admin', false)
         ])
 
         // Handle any database errors
@@ -91,6 +94,13 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
           console.error('Error fetching votes:', votesRes.error)
           throw new Error(`Votes: ${votesRes.error.message}`)
         }
+        if (votersCountRes.error) {
+          console.error('Error fetching voter count:', votersCountRes.error)
+        }
+
+        // Set total eligible voters count
+        const voterCount = votersCountRes.count || 0
+        setTotalEligibleVoters(voterCount || 120) // fallback to 120 if count fails
 
         // Set election settings (use first record or fallback)
         const settings = settingsRes.data?.[0] || {
@@ -172,7 +182,7 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
   const handleVote = async (positionId: string, candidateId: string | null) => {
     if (!voterProfile || voting) return
 
-    setVoting(positionId)
+    setVoting({positionId, candidateId})
     try {
       // Check if voting is open
       if (!electionSettings?.is_voting_open) {
@@ -193,33 +203,38 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
         return
       }
 
-      // Insert vote
-      const { error: voteError } = await supabase
-        .from('election_votes')
-        .insert({
-          voter_id: voterProfile.id,
-          position_id: positionId,
-          candidate_id: candidateId
+      // Use the secure voting function that handles both vote insertion and status update atomically
+      const { data: voteResult, error: voteError } = await supabase
+        .rpc('submit_vote', {
+          p_voter_id: voterProfile.id,
+          p_position_id: positionId,
+          p_candidate_id: candidateId
         })
 
-      if (voteError) throw voteError
+      if (voteError) {
+        console.error('Voting function error:', voteError)
+        throw voteError
+      }
 
-      // Increment candidate vote count
-      const { error: incrementError } = await supabase.rpc('increment_candidate_vote_count', {
-        candidate_id: candidateId
-      })
+      console.log('Vote function result:', voteResult)
 
-      if (incrementError) throw incrementError
+      if (!voteResult.success) {
+        throw new Error(voteResult.error || 'Vote submission failed')
+      }
+
+      console.log('Vote submitted successfully with automatic status update')
+      
+      // Update local state to reflect the change immediately
+      setVoterProfile(prev => prev ? { ...prev, has_voted: true } : null)
 
       // Check if user has voted for all positions
       const allPositions = positions.length
       const userVotes = positions.filter(p => p.user_vote).length + 1
 
+      console.log('Vote progress:', { userVotes, allPositions, votedForAllPositions: userVotes === allPositions })
+
       if (userVotes === allPositions) {
-        // Mark voter as completed
-        await supabase.rpc('mark_voter_as_voted', {
-          voter_id: voterProfile.id
-        })
+        console.log('Voter has completed all positions!')
       }
 
       // Refresh data by refetching user votes
@@ -248,8 +263,43 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
   }
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
-    onLogout()
+    if (isLoggingOut) return // Prevent double-clicks
+    
+    try {
+      setIsLoggingOut(true)
+      toast.loading('Logging out...', { id: 'voter-logout-toast' })
+      
+      // Clear any ongoing operations
+      setLoading(false)
+      setVoting(null)
+      
+      // Sign out from Supabase
+      const { error } = await supabase.auth.signOut()
+      
+      if (error) {
+        console.error('Voter logout error:', error)
+        toast.error(`Logout failed: ${error.message}`, { id: 'voter-logout-toast' })
+        return
+      }
+      
+      // Clear local state
+      setVoterProfile(null)
+      setPositions([])
+      setElectionSettings(null)
+      
+      toast.success('Logged out successfully', { id: 'voter-logout-toast' })
+      
+      // Small delay to show success message before calling parent logout
+      setTimeout(() => {
+        onLogout()
+      }, 500)
+      
+    } catch (error) {
+      console.error('Unexpected voter logout error:', error)
+      toast.error('Logout failed. Please try refreshing the page.', { id: 'voter-logout-toast' })
+    } finally {
+      setIsLoggingOut(false)
+    }
   }
 
   if (loading) {
@@ -303,10 +353,24 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
                 )}
                 <button
                   onClick={handleLogout}
-                  className="group flex items-center space-x-2 text-white bg-red-500 hover:bg-red-600 px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 shadow-md hover:shadow-lg text-sm font-medium"
+                  disabled={isLoggingOut}
+                  className={`group flex items-center space-x-2 text-white ${
+                    isLoggingOut 
+                      ? 'bg-gray-400 cursor-not-allowed' 
+                      : 'bg-red-500 hover:bg-red-600 transform hover:scale-105'
+                  } px-4 py-2 rounded-xl transition-all duration-200 shadow-md hover:shadow-lg text-sm font-medium min-w-[100px] justify-center`}
                 >
-                  <LogOut className="h-4 w-4 group-hover:scale-110 transition-transform flex-shrink-0" />
-                  <span>Logout</span>
+                  {isLoggingOut ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/20 border-t-white"></div>
+                      <span>Logging out...</span>
+                    </>
+                  ) : (
+                    <>
+                      <LogOut className="h-4 w-4 group-hover:scale-110 transition-transform flex-shrink-0" />
+                      <span>Logout</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -338,6 +402,9 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
               const abstainVotes = position.abstain_count || 0
               const totalVotes = candidateVotes + abstainVotes
               
+              // Calculate participation rate properly - using actual voter count from database
+              const participationRate = totalEligibleVoters > 0 ? Math.round((totalVotes / totalEligibleVoters) * 100) : 0
+              
               return (
                 <div key={position.id} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
                   <div className="bg-gradient-to-r from-slate-50 to-slate-100 px-4 sm:px-8 py-4 sm:py-6 border-b border-slate-200">
@@ -357,7 +424,7 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
                       <div className="text-center sm:text-right">
                         <div className="text-xs sm:text-sm text-slate-500">Participation Rate</div>
                         <div className="text-lg sm:text-xl font-bold text-slate-800">
-                          {voterProfile ? Math.round((totalVotes / 1) * 100) : 0}%
+                          {participationRate}%
                         </div>
                       </div>
                     </div>
@@ -624,10 +691,24 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
                 )}
                 <button
                   onClick={handleLogout}
-                  className="flex items-center space-x-2 text-white bg-red-500 hover:bg-red-600 px-4 py-2 rounded-lg transition-all duration-200 text-sm font-medium shadow-md"
+                  disabled={isLoggingOut}
+                  className={`flex items-center space-x-2 text-white ${
+                    isLoggingOut 
+                      ? 'bg-gray-400 cursor-not-allowed' 
+                      : 'bg-red-500 hover:bg-red-600'
+                  } px-4 py-2 rounded-lg transition-all duration-200 text-sm font-medium shadow-md min-w-[100px] justify-center`}
                 >
-                  <LogOut className="h-4 w-4" />
-                  <span>Logout</span>
+                  {isLoggingOut ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/20 border-t-white"></div>
+                      <span>Logging out...</span>
+                    </>
+                  ) : (
+                    <>
+                      <LogOut className="h-4 w-4" />
+                      <span>Logout</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -690,7 +771,6 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
                   <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
                     {position.candidates.map((candidate) => {
                       const isSelected = userVote?.candidate_id === candidate.id
-                      const isVoting = voting === position.id
 
                       return (
                         <div 
@@ -734,10 +814,14 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
                           {!hasVoted && (
                             <button
                               onClick={() => handleVote(position.id, candidate.id)}
-                              disabled={isVoting}
-                              className="w-full bg-indigo-600 text-white py-2 px-3 sm:px-4 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm sm:text-base"
+                              disabled={voting !== null}
+                              className={`w-full py-2 px-3 sm:px-4 rounded-lg transition-colors text-sm sm:text-base ${
+                                voting !== null
+                                  ? 'bg-gray-400 text-gray-600 cursor-not-allowed opacity-50'
+                                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                              }`}
                             >
-                              {isVoting ? (
+                              {voting?.positionId === position.id && voting?.candidateId === candidate.id ? (
                                 <div className="flex items-center justify-center">
                                   <div className="animate-spin rounded-full h-3 w-3 sm:h-4 sm:w-4 border-b-2 border-white mr-2"></div>
                                   Voting...
@@ -786,10 +870,14 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
 
                         <button
                           onClick={() => handleVote(position.id, null)}
-                          disabled={voting === position.id}
-                          className="w-full bg-yellow-600 text-white py-2 px-3 sm:px-4 rounded-lg hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm sm:text-base"
+                          disabled={voting !== null}
+                          className={`w-full py-2 px-3 sm:px-4 rounded-lg transition-colors text-sm sm:text-base ${
+                            voting !== null
+                              ? 'bg-gray-400 text-gray-600 cursor-not-allowed opacity-50'
+                              : 'bg-yellow-600 text-white hover:bg-yellow-700'
+                          }`}
                         >
-                          {voting === position.id ? (
+                          {voting?.positionId === position.id && voting?.candidateId === null ? (
                             <div className="flex items-center justify-center">
                               <div className="animate-spin rounded-full h-3 w-3 sm:h-4 sm:w-4 border-b-2 border-white mr-2"></div>
                               Processing...

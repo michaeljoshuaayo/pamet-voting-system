@@ -120,10 +120,30 @@ export default function Home() {
   }
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
-    setUser(null)
-    setUserProfile(null)
-    setViewAsVoter(false)
+    try {
+      // Clear local state first
+      setUser(null)
+      setUserProfile(null)
+      setViewAsVoter(false)
+      
+      // Sign out from Supabase
+      const { error } = await supabase.auth.signOut()
+      
+      if (error) {
+        console.error('Logout error:', error)
+        // Even if logout fails, we've cleared local state
+        // Force reload to ensure clean state
+        window.location.reload()
+      }
+      
+      // Optional: Clear any cached data in localStorage
+      localStorage.removeItem('supabase.auth.token')
+      
+    } catch (error) {
+      console.error('Unexpected logout error:', error)
+      // Force page reload as fallback
+      window.location.reload()
+    }
   }
 
   if (loading) {
