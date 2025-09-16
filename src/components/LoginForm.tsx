@@ -64,7 +64,6 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
             </div>
             <h1 className="text-2xl font-bold text-white mb-2">Welcome Back</h1>
             <p className="text-gray-300 text-sm">PAMET Sorsogon Chapter Election</p>
-            <div className="w-16 h-1 bg-gradient-to-r from-blue-400 to-blue-600 mx-auto mt-4 rounded-full"></div>
           </div>
 
           {/* Login Form */}
