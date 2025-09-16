@@ -16,6 +16,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "PAMET Sorsogon Chapter Election System",
   description: "Digital voting system for PAMET Sorsogon Chapter elections",
+  viewport: "width=device-width, initial-scale=1",
+  robots: "noindex, nofollow", // Prevent search engine indexing for security
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({

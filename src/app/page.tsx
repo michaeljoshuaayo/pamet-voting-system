@@ -55,33 +55,51 @@ export default function Home() {
   }
 
   useEffect(() => {
+    let mounted = true;
+    
     const initAuth = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
-          setUser(user)
+        // Check session first (faster than getUser)
+        const { data: { session } } = await supabase.auth.getSession()
+        
+        if (session?.user && mounted) {
+          setUser(session.user)
+          
+          // Fetch profile with better error handling
           const { data: profile, error } = await supabase
             .from('voter_profiles')
             .select('*')
-            .eq('user_id', user.id)
+            .eq('user_id', session.user.id)
             .single()
 
-          if (!error) {
+          if (!error && profile && mounted) {
             setUserProfile(profile)
           }
         }
       } catch (error) {
         console.error('Error checking user:', error)
       } finally {
-        setLoading(false)
+        if (mounted) {
+          setLoading(false)
+        }
       }
     }
+
+    // Set a timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      if (mounted) {
+        setLoading(false)
+      }
+    }, 10000) // 10 second timeout
 
     initAuth()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (!mounted) return
+        
         if (event === 'SIGNED_IN' && session) {
+          setUser(session.user)
           await fetchUserProfile(session.user)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
@@ -90,7 +108,11 @@ export default function Home() {
       }
     )
 
-    return () => subscription.unsubscribe()
+    return () => {
+      mounted = false
+      clearTimeout(timeoutId)
+      subscription.unsubscribe()
+    }
   }, [])
 
   const handleLoginSuccess = () => {
@@ -106,10 +128,16 @@ export default function Home() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
+          <div className="relative">
+            <div className="animate-spin rounded-full h-16 w-16 border-4 border-white/20 border-t-white mx-auto mb-6"></div>
+            <div className="absolute inset-0 rounded-full h-16 w-16 border-4 border-transparent border-t-blue-300 animate-spin mx-auto" style={{animationDuration: '1.5s'}}></div>
+          </div>
+          <div className="space-y-2">
+            <p className="text-white font-medium text-lg">PAMET Election System</p>
+            <p className="text-blue-200 text-sm">Initializing secure connection...</p>
+          </div>
         </div>
       </div>
     )
