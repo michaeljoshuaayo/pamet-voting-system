@@ -126,23 +126,39 @@ export default function Home() {
       setUserProfile(null)
       setViewAsVoter(false)
       
-      // Sign out from Supabase
-      const { error } = await supabase.auth.signOut()
+      // Check if there's an active session before attempting to sign out
+      const { data: { session } } = await supabase.auth.getSession()
       
-      if (error) {
-        console.error('Logout error:', error)
-        // Even if logout fails, we've cleared local state
-        // Force reload to ensure clean state
-        window.location.reload()
+      if (session) {
+        // Only try to sign out if there's an active session
+        const { error } = await supabase.auth.signOut()
+        
+        if (error) {
+          console.error('Logout error:', error)
+          // Even if logout fails, continue with cleanup
+        }
       }
       
-      // Optional: Clear any cached data in localStorage
-      localStorage.removeItem('supabase.auth.token')
+      // Clear any cached data in localStorage
+      try {
+        localStorage.removeItem('supabase.auth.token')
+        // Clear all Supabase auth related items
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('sb-') || key.includes('supabase')) {
+            localStorage.removeItem(key)
+          }
+        })
+      } catch (storageError) {
+        console.warn('Could not clear localStorage:', storageError)
+      }
+      
+      // Force a clean reload to ensure complete logout
+      window.location.href = window.location.origin
       
     } catch (error) {
       console.error('Unexpected logout error:', error)
       // Force page reload as fallback
-      window.location.reload()
+      window.location.href = window.location.origin
     }
   }
 

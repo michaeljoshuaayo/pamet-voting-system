@@ -11,7 +11,6 @@ import {
   Award,
   Trophy,
   Users,
-  Star,
   UserCheck,
   TrendingUp,
   BarChart3,
@@ -273,13 +272,18 @@ export default function ElectionVoting({ onLogout, onBackToAdmin }: ElectionVoti
       setLoading(false)
       setVoting(null)
       
-      // Sign out from Supabase
-      const { error } = await supabase.auth.signOut()
+      // Check if there's an active session before attempting to sign out
+      const { data: { session } } = await supabase.auth.getSession()
       
-      if (error) {
-        console.error('Voter logout error:', error)
-        toast.error(`Logout failed: ${error.message}`, { id: 'voter-logout-toast' })
-        return
+      if (session) {
+        // Only try to sign out if there's an active session
+        const { error } = await supabase.auth.signOut()
+        
+        if (error && !error.message.includes('session_not_found') && !error.message.includes('Auth session missing')) {
+          console.error('Voter logout error:', error)
+          toast.error(`Logout failed: ${error.message}`, { id: 'voter-logout-toast' })
+          return
+        }
       }
       
       // Clear local state

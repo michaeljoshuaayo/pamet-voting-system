@@ -85,13 +85,18 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
       // Clear any ongoing operations
       setLoading(false)
       
-      // Sign out from Supabase
-      const { error } = await supabase.auth.signOut()
+      // Check if there's an active session before attempting to sign out
+      const { data: { session } } = await supabase.auth.getSession()
       
-      if (error) {
-        console.error('Logout error:', error)
-        toast.error(`Logout failed: ${error.message}`, { id: 'logout-toast' })
-        return
+      if (session) {
+        // Only try to sign out if there's an active session
+        const { error } = await supabase.auth.signOut()
+        
+        if (error && !error.message.includes('session_not_found') && !error.message.includes('Auth session missing')) {
+          console.error('Logout error:', error)
+          toast.error(`Logout failed: ${error.message}`, { id: 'logout-toast' })
+          return
+        }
       }
       
       // Clear local state
