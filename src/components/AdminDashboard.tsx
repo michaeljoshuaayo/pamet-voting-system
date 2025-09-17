@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase, Database } from '@/lib/supabase'
 import { 
   Users, 
@@ -45,6 +45,8 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
   const [loading, setLoading] = useState(true)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now())
+  const [clearVotesModal, setClearVotesModal] = useState(false)
+  const [isClearingVotes, setIsClearingVotes] = useState(false)
   
   // Performance metrics state
   const [performanceMetrics, setPerformanceMetrics] = useState({
@@ -431,6 +433,38 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
       console.error('Error toggling voting:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       toast.error(`Error updating voting status: ${errorMessage}`)
+    }
+  }
+
+  const handleClearVotes = async () => {
+    try {
+      setIsClearingVotes(true)
+      
+      const response = await fetch('/api/clear-votes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.message || 'Failed to clear votes')
+      }
+
+      const result = await response.json()
+      
+      // Refresh all data after clearing votes
+      await fetchData()
+      setClearVotesModal(false)
+      
+      toast.success(`Successfully cleared all votes! (${result.deletedVotes} votes removed)`)
+    } catch (error) {
+      console.error('Error clearing votes:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      toast.error(`Error clearing votes: ${errorMessage}`)
+    } finally {
+      setIsClearingVotes(false)
     }
   }
 
@@ -1332,6 +1366,53 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
                 </div>
               </div>
             </div>
+
+            {/* Administrative Actions */}
+            <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-slate-200 p-8">
+              <div className="flex items-center space-x-3 mb-6">
+                <div className="w-6 h-6 bg-gradient-to-r from-red-500 to-rose-600 rounded-lg flex items-center justify-center">
+                  <Shield className="h-4 w-4 text-white" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-800">Administrative Actions</h3>
+              </div>
+              
+              <div className="bg-gradient-to-r from-red-50 to-rose-50 rounded-xl p-6 border border-red-100">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <h4 className="text-lg font-bold text-red-600 mb-2">⚠️ Clear All Votes</h4>
+                    <p className="text-sm text-red-500 mb-4">
+                      This action will permanently delete all votes and reset candidate vote counts. 
+                      Voter registration and candidate data will remain intact. This action cannot be undone.
+                    </p>
+                    <div className="flex items-center space-x-4 text-sm text-red-600">
+                      <span>• Deletes all election votes</span>
+                      <span>• Resets candidate vote counts to 0</span>
+                      <span>• Marks all voters as &ldquo;not voted&rdquo;</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setClearVotesModal(true)}
+                    disabled={isClearingVotes}
+                    className="ml-6 py-3 px-6 bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 
+                             text-white font-bold rounded-xl transition-all duration-300 transform hover:scale-105 
+                             shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none
+                             flex items-center space-x-2"
+                  >
+                    {isClearingVotes ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <span>Clearing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="h-4 w-4" />
+                        <span>Clear All Votes</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1505,6 +1586,18 @@ export default function AdminDashboard({ onLogout, onViewAsVoter, showViewAsVote
           title={deleteModal.title}
           message={deleteModal.message}
           confirmText="Delete"
+          cancelText="Cancel"
+          type="danger"
+        />
+
+        {/* Clear Votes Confirmation Modal */}
+        <ConfirmModal
+          isOpen={clearVotesModal}
+          onClose={() => setClearVotesModal(false)}
+          onConfirm={handleClearVotes}
+          title="⚠️ Clear All Votes"
+          message="This will permanently delete ALL votes and reset candidate vote counts to zero. Voter registrations will remain intact. This action cannot be undone. Are you sure you want to proceed?"
+          confirmText="Clear All Votes"
           cancelText="Cancel"
           type="danger"
         />

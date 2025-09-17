@@ -35,10 +35,10 @@ export const pametCandidates = [
   
   // Public Information Officer - BIMS
   { id: '10', position_id: '7', first_name: 'Mernadith', last_name: 'Garcera', platform: 'Matnog Medicare Hospital', photo_url: '/candidates/Meredith.jpg', vote_count: 0, is_active: true, created_at: '2024-01-01T00:00:00Z' },
-  { id: '11', position_id: '7', first_name: 'Jan Albert', last_name: 'Apuhin', platform: 'Irosin District Hospital', photo_url: null, vote_count: 0, is_active: true, created_at: '2024-01-01T00:00:00Z' },
+  { id: '11', position_id: '7', first_name: 'Jan Albert', last_name: 'Apuhin', platform: 'Irosin District Hospital', photo_url: '/candidates/Patrick.jpg', vote_count: 0, is_active: true, created_at: '2024-01-01T00:00:00Z' },
   
   // Public Information Officer - GUIPRIBAR
-  { id: '12', position_id: '8', first_name: 'Patrick Lorenz', last_name: 'Garcera', platform: 'Gubat Distict Hospital', photo_url: '/candidates/Patrick.jpg', vote_count: 0, is_active: true, created_at: '2024-01-01T00:00:00Z' },
+  { id: '12', position_id: '8', first_name: 'Patrick Lorenz', last_name: 'Garcera', platform: 'Gubat Distict Hospital', photo_url: null, vote_count: 0, is_active: true, created_at: '2024-01-01T00:00:00Z' },
   
   // Public Information Officer - CSOLAR
   { id: '13', position_id: '9', first_name: 'Ivy Gail', last_name: 'Bajamundi', platform: 'Castilla District Hospital', photo_url: null, vote_count: 0, is_active: true, created_at: '2024-01-01T00:00:00Z' },
